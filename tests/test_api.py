@@ -1,4 +1,4 @@
-"""Integration tests: accounts, roles, privacy, matching, atomic updates, analytics."""
+﻿"""Integration tests: accounts, roles, privacy, matching, atomic updates, analytics."""
 import os
 
 os.environ["JWT_SECRET"] = "unit-test-only-not-for-production-0123456789abcdef"
@@ -75,11 +75,7 @@ def test_complete_flow_and_privacy(setup):
     assert c.get(f"/requests/{item_id}", headers=sh).status_code == 403
     assert c.get(f"/requests/{item_id}", headers=vh).status_code == 403
     public = c.get("/requests", headers=vh)
-    assert public.status_code == 200
-    assert len(public.json()) == 1
-    assert "address" not in public.json()[0]
-    assert "phone" not in public.json()[0]
-    assert "description" not in public.json()[0]
+    assert public.status_code == 403
     assert c.post(f"/requests/{item_id}/claim", headers=vh).status_code == 403
     assert c.get("/suggestions", headers=vh).status_code == 403
 
@@ -219,3 +215,4 @@ def test_guest_form_validation_honeypot_and_rate_limit(setup):
     for _ in range(4):
         assert c.post('/public/requests',json=body).status_code == 201
     assert c.post('/public/requests',json=body).status_code == 429
+

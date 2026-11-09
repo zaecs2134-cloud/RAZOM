@@ -1,4 +1,4 @@
-"""Volunteer coordination platform — educational FastAPI MVP.
+﻿"""Volunteer coordination platform — educational FastAPI MVP.
 
 Run: uvicorn main:app --reload
 API docs: http://127.0.0.1:8000/docs
@@ -36,6 +36,9 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 from sqlalchemy.exc import IntegrityError
 
 load_dotenv()
+import ai_service      # noqa: E402  (після load_dotenv)
+import telegram_bot    # noqa: E402
+
 logger = logging.getLogger(__name__)
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./volunteer.db")
 JWT_SECRET = os.getenv("JWT_SECRET", "")
@@ -123,6 +126,16 @@ class GuestReceipt(Base):
     token_sha256: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class TelegramLinkCode(Base):
+    """Одноразовий код прив'язки Telegram-чату до акаунта (зберігається лише SHA-256)."""
+    __tablename__ = "telegram_link_codes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    code_sha256: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Resource(Base):
@@ -238,6 +251,10 @@ class RequestPublic(BaseModel):
     vulnerable_people: bool
     status: RequestStatus
     priority_score: int
+    priority_tier: str = "normal"       # critical | high | normal | can_wait
+    priority_reasons: list[str] = []    # пояснення, чому така оцінка
+    priority_source: str = "rules"     # gemini | rules
+    needs_review: bool = False          # гостьова заявка ще не перевірена адміном
     created_at: datetime
 
 
@@ -269,9 +286,11 @@ class AllocationIn(BaseModel):
     quantity: int = Field(ge=1, le=1_000_000)
 
 
-class TelegramLinkIn(BaseModel):
-    # DEMO ONLY: real deployment must confirm chat ownership through Telegram.
-    chat_id: str = Field(min_length=1, max_length=40, pattern=r"^-?\d+$")
+class QueuesOut(BaseModel):
+    by_priority: list[RequestPublic]   # найкритичніші — першими
+    by_time: list[RequestPublic]       # за часом створення
+    counts: dict[str, int]             # кількість за рівнями критичності
+    in_progress: list[RequestPublic]   # заявки в роботі (свої для волонтера, усі для адміна)
 
 
 class Suggestion(BaseModel):
@@ -282,7 +301,12 @@ class Suggestion(BaseModel):
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(engine)  # For a prototype; use Alembic migrations in production.
-    yield
+    bot = telegram_bot.start_polling()
+    try:
+        yield
+    finally:
+        if bot:
+            bot[1].set()
 
 
 app = FastAPI(
@@ -295,7 +319,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[FRONTEND_ORIGIN, "http://127.0.0.1:3000"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -339,27 +363,19 @@ def require(user: User, *roles: Role, verified: bool = False) -> None:
 
 
 def score(item: HelpRequest) -> int:
-    """Transparent queue suggestion only. Never an autonomous dispatch decision."""
-    created = item.created_at
-    if created.tzinfo is None:  # SQLite stores naive timestamps.
-        created = created.replace(tzinfo=timezone.utc)
-    age_hours = max(0, (datetime.now(timezone.utc) - created).total_seconds() / 3600)
-    category_bonus = {"evacuation": 12, "medicine": 8, "food": 3, "other": 0}
-    return (
-        item.urgency * 15
-        + category_bonus.get(item.category, 0)
-        + (10 if item.vulnerable_people else 0)
-        + min(item.people_count, 10) * 2
-        + min(int(age_hours // 6) * 2, 24)
-    )
+    """Прозора підказка для черги (див. ai_service.py). Ніколи не є автономним рішенням."""
+    return ai_service.analyze_item(item).score
 
 
-def public_request(item: HelpRequest) -> RequestPublic:
+def public_request(item: HelpRequest, needs_review: bool = False) -> RequestPublic:
+    analysis = ai_service.analyze_item(item)
     return RequestPublic(
         id=item.id, title=item.title, city=item.city, category=item.category,
         urgency=item.urgency, people_count=item.people_count,
         vulnerable_people=item.vulnerable_people, status=item.status,
-        priority_score=score(item), created_at=item.created_at,
+        priority_score=analysis.score, priority_tier=analysis.tier,
+        priority_reasons=analysis.reasons, priority_source=analysis.source, needs_review=needs_review,
+        created_at=item.created_at,
     )
 
 
@@ -371,17 +387,8 @@ def private_request(item: HelpRequest) -> RequestPrivate:
 
 
 def send_telegram(chat_id: str, message: str) -> None:
-    """Do not put addresses/phone numbers in Telegram messages."""
-    if not TELEGRAM_BOT_TOKEN or not chat_id:
-        return
-    endpoint = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    data = json.dumps({"chat_id": chat_id, "text": message}).encode("utf-8")
-    req = urlrequest.Request(endpoint, data=data, headers={"Content-Type": "application/json"})
-    try:
-        with urlrequest.urlopen(req, timeout=4) as response:
-            response.read()
-    except Exception:
-        logger.exception("Telegram notification failed")
+    """Не додавайте адреси/телефони в повідомлення Telegram."""
+    telegram_bot.send_message(chat_id, message)
 
 
 @app.get("/", include_in_schema=False)
@@ -458,12 +465,7 @@ def submit_guest_request(payload: GuestSubmit, request: Request, db: Db, backgro
                         token_sha256=hashlib.sha256(token.encode()).hexdigest()))
     db.commit()
     db.refresh(item)
-    admins = db.scalars(select(User).where(
-        User.role == Role.admin.value, User.telegram_chat_id.is_not(None)
-    )).all()
-    for admin in admins:
-        background_tasks.add_task(send_telegram, admin.telegram_chat_id,
-                                  f"New guest request #{item.id} in {item.city}; awaiting review.")
+    background_tasks.add_task(telegram_bot.notify_admins_new, item.id)
     return GuestCreated(request_id=item.id, tracking_code=token)
 
 
@@ -491,11 +493,12 @@ def pending_guest_requests(user: CurrentUser, db: Db):
     pending_ids = select(GuestReceipt.request_id).where(GuestReceipt.reviewed_at.is_(None))
     items = db.scalars(select(HelpRequest).where(HelpRequest.id.in_(pending_ids))
                        .order_by(HelpRequest.created_at).limit(200)).all()
-    return [public_request(item) for item in items]
+    return [public_request(item, needs_review=True) for item in items]
 
 
 @app.patch("/admin/guest-requests/{request_id}/review")
-def review_guest_request(request_id: int, user: CurrentUser, db: Db):
+def review_guest_request(request_id: int, user: CurrentUser, db: Db,
+                         background_tasks: BackgroundTasks):
     require(user, Role.admin)
     receipt = db.scalar(select(GuestReceipt).where(GuestReceipt.request_id == request_id))
     if not receipt:
@@ -504,6 +507,7 @@ def review_guest_request(request_id: int, user: CurrentUser, db: Db):
         raise HTTPException(409, "Заявку вже перевірено")
     receipt.reviewed_at = datetime.now(timezone.utc)
     db.commit()
+    background_tasks.add_task(telegram_bot.notify_volunteers_visible, request_id)
     return {"request_id": request_id, "reviewed": True}
 
 
@@ -549,11 +553,35 @@ def me(user: CurrentUser):
     return user
 
 
-@app.post("/me/telegram")
-def link_telegram(payload: TelegramLinkIn, user: CurrentUser, db: Db):
-    user.telegram_chat_id = payload.chat_id
+@app.get("/me/telegram")
+def telegram_status(user: CurrentUser):
+    return {"linked": bool(user.telegram_chat_id), "bot_enabled": telegram_bot.enabled(),
+            "bot_username": telegram_bot.BOT_USERNAME or None}
+
+
+@app.post("/me/telegram/link")
+def telegram_link_code(request: Request, user: CurrentUser, db: Db):
+    """Створює одноразовий код (15 хв). Чат підтверджується самим Telegram: код треба надіслати боту."""
+    if user.role == Role.volunteer.value and not user.is_verified:
+        raise HTTPException(403, "Спершу дочекайтеся підтвердження акаунта адміністрацією")
+    if user.role == Role.applicant.value:
+        raise HTTPException(403, "Сповіщення доступні волонтерам та адміністраторам")
+    if not telegram_bot.enabled():
+        raise HTTPException(503, "Telegram-бот не налаштований (TELEGRAM_BOT_TOKEN)")
+    _limit_anonymous(request, f"tglink{user.id}", max_calls=5, seconds=600)
+    code = secrets.token_urlsafe(12)
+    db.add(TelegramLinkCode(user_id=user.id, code_sha256=hashlib.sha256(code.encode()).hexdigest(),
+                            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15)))
     db.commit()
-    return {"message": "Demo chat ID saved; production must confirm chat ownership"}
+    link = f"https://t.me/{telegram_bot.BOT_USERNAME}?start={code}" if telegram_bot.BOT_USERNAME else None
+    return {"code": code, "link": link, "expires_in_minutes": 15}
+
+
+@app.delete("/me/telegram")
+def telegram_unlink(user: CurrentUser, db: Db):
+    user.telegram_chat_id = None
+    db.commit()
+    return {"linked": False}
 
 
 @app.post("/requests", response_model=RequestPrivate, status_code=201)
@@ -565,20 +593,17 @@ def create_help_request(payload: HelpCreate, user: CurrentUser, db: Db,
     db.add(item)
     db.commit()
     db.refresh(item)
-    admins = db.scalars(select(User).where(User.role == Role.admin.value,
-                                           User.telegram_chat_id.is_not(None))).all()
-    for admin in admins:
-        background_tasks.add_task(
-            send_telegram, admin.telegram_chat_id,
-            f"New request #{item.id}: {item.category} in {item.city}. Review in dashboard.",
-        )
+    background_tasks.add_task(telegram_bot.notify_admins_new, item.id)
+    background_tasks.add_task(telegram_bot.notify_volunteers_visible, item.id)
     return private_request(item)
 
 
-@app.get("/requests", response_model=list[RequestPublic])
-def list_requests(user: CurrentUser, db: Db, city: str | None = Query(None, max_length=100),
-                  category: Category | None = None,
-                  status_filter: RequestStatus | None = Query(None, alias="status")):
+def visible_requests(user: User, db: Session, city: str | None = None,
+                     category: Category | None = None,
+                     status_filter: RequestStatus | None = None) -> list[HelpRequest]:
+    """Заявки, які ця роль має право бачити (спільна логіка для списку, черг і Telegram)."""
+    if user.role == Role.volunteer.value and not user.is_verified:
+        raise HTTPException(403, "Volunteer verification is required")
     stmt = select(HelpRequest)
     if user.role == Role.volunteer.value:
         # Newly submitted guest requests are admin-only until a human review.
@@ -597,8 +622,47 @@ def list_requests(user: CurrentUser, db: Db, city: str | None = Query(None, max_
             (HelpRequest.status == RequestStatus.new.value) |
             (HelpRequest.assigned_volunteer_id == user.id)
         )
-    requests = db.scalars(stmt.limit(500)).all()
+    return list(db.scalars(stmt.limit(500)).all())
+
+
+@app.get("/requests", response_model=list[RequestPublic])
+def list_requests(user: CurrentUser, db: Db, city: str | None = Query(None, max_length=100),
+                  category: Category | None = None,
+                  status_filter: RequestStatus | None = Query(None, alias="status")):
+    requests = visible_requests(user, db, city, category, status_filter)
     return [public_request(item) for item in sorted(requests, key=score, reverse=True)]
+
+
+@app.get("/queues", response_model=QueuesOut)
+def request_queues(user: CurrentUser, db: Db, city: str | None = Query(None, max_length=100),
+                   category: Category | None = None,
+                   order: str = Query("newest", pattern="^(newest|oldest)$")):
+    """Дві черги відкритих заявок: за потребою (критичність) і за часом."""
+    require(user, Role.admin, Role.volunteer, verified=True)
+    items = visible_requests(user, db, city, category, RequestStatus.new)
+    unreviewed_ids = set(db.scalars(select(GuestReceipt.request_id).where(
+        GuestReceipt.reviewed_at.is_(None))).all()) if user.role == Role.admin.value else set()
+    cards = [public_request(item, needs_review=item.id in unreviewed_ids) for item in items]
+
+    def created_key(card: RequestPublic) -> float:
+        created = card.created_at
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        return created.timestamp()
+
+    by_priority = sorted(cards, key=lambda c: (ai_service.TIER_ORDER[c.priority_tier],
+                                               -c.priority_score))
+    by_time = sorted(cards, key=created_key, reverse=(order == "newest"))
+    counts = {tier: 0 for tier in ai_service.TIER_ORDER}
+    for card in cards:
+        counts[card.priority_tier] += 1
+    work = select(HelpRequest).where(HelpRequest.status == RequestStatus.assigned.value)
+    if user.role == Role.volunteer.value:
+        work = work.where(HelpRequest.assigned_volunteer_id == user.id)
+    in_progress = [public_request(i) for i in db.scalars(
+        work.order_by(HelpRequest.created_at.desc()).limit(200)).all()]
+    return QueuesOut(by_priority=by_priority, by_time=by_time, counts=counts,
+                     in_progress=in_progress)
 
 
 @app.get("/requests/{request_id}", response_model=RequestPrivate)
@@ -715,6 +779,8 @@ def suggestions(user: CurrentUser, db: Db, city: str | None = Query(None, max_le
         Resource.owner_id == user.id, Resource.quantity > 0
     )).all()
     unreviewed = select(GuestReceipt.request_id).where(GuestReceipt.reviewed_at.is_(None))
+    if user.role == Role.volunteer.value and not user.is_verified:
+        raise HTTPException(403, "Volunteer verification is required")
     stmt = select(HelpRequest).where(HelpRequest.status == RequestStatus.new.value,
                                     HelpRequest.id.not_in(unreviewed))
     if city:
@@ -804,3 +870,4 @@ def analytics(user: CurrentUser, db: Db):
         "by_category": dict(by_category),
         "by_city": dict(by_city),
     }
+
