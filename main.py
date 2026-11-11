@@ -300,13 +300,8 @@ class Suggestion(BaseModel):
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    Base.metadata.create_all(engine)  # For a prototype; use Alembic migrations in production.
-    bot = telegram_bot.start_polling()
-    try:
-        yield
-    finally:
-        if bot:
-            bot[1].set()
+    Base.metadata.create_all(engine)
+    yield
 
 
 app = FastAPI(
@@ -322,6 +317,30 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+    secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+    if not secret:
+        raise HTTPException(status_code=503)
+
+    received = request.headers.get(
+        "X-Telegram-Bot-Api-Secret-Token", ""
+    )
+    if not secrets.compare_digest(received, secret):
+        raise HTTPException(status_code=403)
+
+    update_data = await request.json()
+    background_tasks.add_task(
+        telegram_bot.handle_update,
+        update_data,
+    )
+    return {"ok": True}
 
 
 def get_db():
