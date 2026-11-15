@@ -72,7 +72,7 @@ async function razomLoadGeography() {
     info.textContent = data.note + (data.unmapped.length
       ? ` Не нанесено на карту: ${data.unmapped.map(p=>`${p.city} (${p.requests} заявок)`).join(', ')}.`
       : '');
-    if (!data.points.length) { $('geoMap').textContent = 'Немає заявок у відомих містах для відображення на карті.'; return; }
+    if (!data.points.length) info.textContent += ' Немає відкритих заявок у відомих містах: показано оглядову мапу України.';
     const L = await razomLoadLeaflet();
     if (me?.role !== 'admin') return;
     razomClearMap();
@@ -90,7 +90,8 @@ async function razomLoadGeography() {
       pin.bindPopup(`<b>${safe(point.city)}</b><p>Відкритих заявок: ${point.requests}<br>Позицій ресурсів: ${point.resources}</p>`);
       coords.push([point.lat, point.lng]);
     });
-    if (coords.length === 1) razomMap.setView(coords[0], 9);
+    if (!coords.length) razomMap.setView([49.0, 31.0], 6);
+    else if (coords.length === 1) razomMap.setView(coords[0], 9);
     else razomMap.fitBounds(coords, {padding: [25, 25], maxZoom: 9});
     razomMapBounds = coords;
     // Routes are only candidate transfers between city centres, not actual road paths.
@@ -112,7 +113,7 @@ async function razomLoadGeography() {
 
 async function razomLoadAdminFeatures() {
   if (me?.role !== 'admin') return;
-  await Promise.all([razomLoadDuplicates(), razomLoadForecast(), razomLoadGeography()]);
+  await Promise.all([razomLoadDuplicates(), razomLoadForecast()]);
 }
 
 async function razomLoadLogistics() {
@@ -176,12 +177,11 @@ clearSensitive = function() {
   }
   razomClearMap();
 };
+$('refreshMap').onclick = () => { if (me?.role === 'admin') razomLoadGeography(); };
 const razomOriginalTab = tab;
 tab = function(name) {
   razomOriginalTab(name);
-  if (name === 'analyticsTab') setTimeout(() => {
-    if (!razomMap) return;
-    razomMap.invalidateSize();
-    if (razomMapBounds?.length > 1) razomMap.fitBounds(razomMapBounds, {padding: [25,25], maxZoom: 9});
-  }, 200);
+  if (name === 'mapTab' && me?.role === 'admin') {
+    razomLoadGeography();
+  }
 };

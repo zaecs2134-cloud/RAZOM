@@ -72,7 +72,7 @@
 <section id="dashboard" class="hidden section"><div class="dash-head"><div><span class="eyebrow" id="dashRole">Кабінет</span><h1 id="dashTitle">Мій кабінет</h1></div><span id="dashEmail" class="muted small"></span></div>
  <div id="tgBox" class="important hidden"></div>
  <div id="pendingNotice" class="important hidden">Ваш обліковий запис очікує підтвердження адміністрацією. Приватні дані заявників наразі недоступні.</div>
- <div class="tabs" role="group" aria-label="Розділи кабінету"><button class="tab active" type="button" data-tab="requestsTab">Заявки</button><button class="tab" type="button" data-tab="resourcesTab" id="resourcesTabButton">Ресурси</button><button class="tab hidden" type="button" data-tab="analyticsTab" id="analyticsTabButton">Адміністрування</button></div>
+ <div class="tabs" role="group" aria-label="Розділи кабінету"><button class="tab active" type="button" data-tab="requestsTab">Заявки</button><button class="tab" type="button" data-tab="resourcesTab" id="resourcesTabButton">Ресурси</button><button class="tab hidden" type="button" data-tab="analyticsTab" id="analyticsTabButton">Адміністрування</button><button class="tab hidden" type="button" data-tab="mapTab" id="mapTabButton">🗺️ Мапа</button></div>
  <div id="requestsTab" class="panel"><h2>Заявки на допомогу</h2><p class="muted">Сортування за пріоритетом — рекомендація, рішення залишається за волонтером.</p><div class="tools"><div class="form-field"><label for="filterCity">Місто</label><input class="control" id="filterCity" placeholder="Усі міста"></div><div class="form-field"><label for="filterCategory">Категорія</label><select class="control" id="filterCategory"><option value="">Усі категорії</option><option value="food">Продукти</option><option value="medicine">Ліки</option><option value="evacuation">Евакуація</option><option value="other">Інше</option></select></div><button id="refresh" type="button" class="btn btn-outline">Оновити</button></div><div id="queueSwitch" class="qswitch hidden"><div class="qtabs" role="group" aria-label="Тип черги"><button type="button" class="qtab active" id="qPriority">🚨 За потребою</button><button type="button" class="qtab" id="qTime">🕒 За часом</button></div><button type="button" class="btn btn-outline hidden" id="qOrder">Спочатку нові ↓</button></div><div id="queueSummary" class="queue-meta"></div><div id="queue" aria-live="polite"></div><div id="inProgress"></div><div id="requestDetail"></div><div class="divider"></div><h3 id="suggestionsHeading">Рекомендовані заявки</h3><div id="suggestionList"></div></div>
  <div id="resourcesTab" class="panel hidden"><h2>Мої ресурси</h2><p class="muted">Ведіть облік доступної допомоги.</p><form id="resourceForm"><div class="form-field"><label for="resourceName">Назва ресурсу</label><input class="control" id="resourceName" name="name" placeholder="Наприклад, продуктові набори" required minlength="2"></div><div class="split"><div class="form-field"><label for="resourceType">Категорія</label><select class="control" id="resourceType" name="category"><option value="food">Продукти</option><option value="medicine">Ліки</option><option value="transport">Транспорт</option><option value="other">Інше</option></select></div><div class="form-field"><label for="resourceCity">Місто</label><input class="control" id="resourceCity" name="city" required minlength="2"></div></div><div class="split"><div class="form-field"><label for="resourceQty">Кількість</label><input class="control" id="resourceQty" name="quantity" type="number" min="1" value="1" required></div><div class="form-field"><label for="resourceUnit">Одиниця виміру</label><input class="control" id="resourceUnit" name="unit" value="шт." required></div></div><button class="btn">Додати ресурс</button></form><div class="divider"></div><h3>Доступні ресурси</h3><div id="myResources"></div>
 <div class="divider"></div>
@@ -87,11 +87,14 @@
 <div class="divider"></div>
 <h3>Прогноз потреб</h3><p class="muted small">Орієнтовний тренд за історією заявок. За недостатньої кількості даних прогноз не показується.</p>
 <div id="forecastCards"></div>
-<div class="divider"></div>
-<h3>Географічна карта і логістика</h3><p class="muted small">На карті — приблизні центри міст, не адреси людей. Пунктиром показані можливі перевезення по прямій, не реальні дороги.</p>
-<div id="geoMap" role="region" aria-label="Карта звернень по містах"></div>
-<p class="muted small" id="geoInfo"></p>
 <div id="statusStats"></div></div>
+ <div id="mapTab" class="panel hidden">
+  <h2>🗺️ Мапа звернень</h2>
+  <p class="muted small">Показано лише приблизні центри міст, без адрес людей. Пунктирні лінії — можливі перевезення по прямій, а не реальні дороги.</p>
+  <button type="button" class="btn btn-outline" id="refreshMap">Оновити мапу</button>
+  <div id="geoMap" role="region" aria-label="Карта звернень по містах"></div>
+  <p class="muted small" id="geoInfo" role="status" aria-live="polite"></p>
+ </div>
 </section>
 <div id="notice" class="hidden" role="status" aria-live="polite"></div>
 <footer class="site-footer"><div class="wrap">RAZOM • Навчальний проєкт МАН • Тестуйте лише з вигаданими даними. Не є екстреною службою.</div></footer>
@@ -128,9 +131,9 @@ $('loginForm').onsubmit=async e=>{e.preventDefault();try{const f=formData(e.targ
 $('registerForm').onsubmit=async e=>{e.preventDefault();try{const f=formData(e.target);await api('/auth/register','POST',{...f,role:'volunteer'});await login(f.email,f.password);e.target.reset();notify('Акаунт створено. Дочекайтеся перевірки адміністрацією.')}catch(err){notify(err.message,true)}};
 $('navLogout').onclick=()=>{token='';me=null;clearSensitive();sessionStorage.removeItem('access_token');toggle('navLogout',false);toggle('navLogin',true);navigate('home');notify('Ви вийшли із системи')};
 function clearSensitive(){for(const id of ['queue','requestDetail','myResources','suggestionList','stats','guestReviewList','pendingVolunteers','statusStats','inProgress','queueSummary','tgBox'])$(id).textContent='';inventory=[];}
-function tab(name){for(const el of document.querySelectorAll('.tab'))el.classList.toggle('active',el.dataset.tab===name);for(const n of ['requestsTab','resourcesTab','analyticsTab'])toggle(n,n===name)}
+function tab(name){for(const el of document.querySelectorAll('.tab'))el.classList.toggle('active',el.dataset.tab===name);for(const n of ['requestsTab','resourcesTab','analyticsTab','mapTab'])toggle(n,n===name)}
 for(const btn of document.querySelectorAll('.tab'))btn.onclick=()=>tab(btn.dataset.tab);
-async function renderDashboard(){clearSensitive();try{me=await api('/me')}catch{me=null;token='';sessionStorage.removeItem('access_token');navigate('home');return}toggle('navLogin',false);toggle('navLogout',true);$('dashRole').textContent=roles[me.role]||me.role;$('dashTitle').textContent=`Вітаємо, ${me.full_name.split(' ')[0]}!`;$('dashEmail').textContent=me.email;const waiting=me.role==='volunteer'&&!me.is_verified;toggle('pendingNotice',waiting);toggle('analyticsTabButton',me.role==='admin');toggle('resourcesTabButton',me.role==='admin'||(me.role==='volunteer'&&!waiting));toggle('suggestionsHeading',me.role==='volunteer'&&!waiting);toggle('resourcesTab',false);showView('dashboard');tab('requestsTab');$('queue').innerHTML=waiting?'<p class="muted">Заявки стануть доступними після перевірки.</p>':'';$('suggestionList').innerHTML='';if(!waiting){await loadRequests();if(me.role==='admin'||me.role==='volunteer')await loadResources();if(me.role==='volunteer')await loadSuggestions()}if(me.role==='admin')await loadAnalytics();if(!waiting){await loadTelegramBox();await openFromHash()}}
+async function renderDashboard(){clearSensitive();try{me=await api('/me')}catch{me=null;token='';sessionStorage.removeItem('access_token');navigate('home');return}toggle('navLogin',false);toggle('navLogout',true);$('dashRole').textContent=roles[me.role]||me.role;$('dashTitle').textContent=`Вітаємо, ${me.full_name.split(' ')[0]}!`;$('dashEmail').textContent=me.email;const waiting=me.role==='volunteer'&&!me.is_verified;toggle('pendingNotice',waiting);toggle('analyticsTabButton',me.role==='admin');toggle('mapTabButton',me.role==='admin');toggle('resourcesTabButton',me.role==='admin'||(me.role==='volunteer'&&!waiting));toggle('suggestionsHeading',me.role==='volunteer'&&!waiting);toggle('resourcesTab',false);showView('dashboard');tab('requestsTab');$('queue').innerHTML=waiting?'<p class="muted">Заявки стануть доступними після перевірки.</p>':'';$('suggestionList').innerHTML='';if(!waiting){await loadRequests();if(me.role==='admin'||me.role==='volunteer')await loadResources();if(me.role==='volunteer')await loadSuggestions()}if(me.role==='admin')await loadAnalytics();if(!waiting){await loadTelegramBox();await openFromHash()}}
 const tierLabels={critical:'Критична',high:'Висока',normal:'Звичайна',can_wait:'Може зачекати'};
 const tierIcons={critical:'🔴',high:'🟠',normal:'🟡',can_wait:'🟢'};
 function fmtTime(v){const d=new Date(/Z|[+-]\d\d:?\d\d$/.test(v)?v:v+'Z');return d.toLocaleString('uk-UA',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}
@@ -222,7 +225,7 @@ async function razomLoadGeography() {
     info.textContent = data.note + (data.unmapped.length
       ? ` Не нанесено на карту: ${data.unmapped.map(p=>`${p.city} (${p.requests} заявок)`).join(', ')}.`
       : '');
-    if (!data.points.length) { $('geoMap').textContent = 'Немає заявок у відомих містах для відображення на карті.'; return; }
+    if (!data.points.length) info.textContent += ' Немає відкритих заявок у відомих містах: показано оглядову мапу України.';
     const L = await razomLoadLeaflet();
     if (me?.role !== 'admin') return;
     razomClearMap();
@@ -240,7 +243,8 @@ async function razomLoadGeography() {
       pin.bindPopup(`<b>${safe(point.city)}</b><p>Відкритих заявок: ${point.requests}<br>Позицій ресурсів: ${point.resources}</p>`);
       coords.push([point.lat, point.lng]);
     });
-    if (coords.length === 1) razomMap.setView(coords[0], 9);
+    if (!coords.length) razomMap.setView([49.0, 31.0], 6);
+    else if (coords.length === 1) razomMap.setView(coords[0], 9);
     else razomMap.fitBounds(coords, {padding: [25, 25], maxZoom: 9});
     razomMapBounds = coords;
     // Routes are only candidate transfers between city centres, not actual road paths.
@@ -262,7 +266,7 @@ async function razomLoadGeography() {
 
 async function razomLoadAdminFeatures() {
   if (me?.role !== 'admin') return;
-  await Promise.all([razomLoadDuplicates(), razomLoadForecast(), razomLoadGeography()]);
+  await Promise.all([razomLoadDuplicates(), razomLoadForecast()]);
 }
 
 async function razomLoadLogistics() {
@@ -326,14 +330,13 @@ clearSensitive = function() {
   }
   razomClearMap();
 };
+$('refreshMap').onclick = () => { if (me?.role === 'admin') razomLoadGeography(); };
 const razomOriginalTab = tab;
 tab = function(name) {
   razomOriginalTab(name);
-  if (name === 'analyticsTab') setTimeout(() => {
-    if (!razomMap) return;
-    razomMap.invalidateSize();
-    if (razomMapBounds?.length > 1) razomMap.fitBounds(razomMapBounds, {padding: [25,25], maxZoom: 9});
-  }, 200);
+  if (name === 'mapTab' && me?.role === 'admin') {
+    razomLoadGeography();
+  }
 };
 
 (async()=>{if(token)await renderDashboard();else if(/^#request-\d+$/.test(location.hash)){navigate('auth');notify('Увійдіть, щоб відкрити заявку',true)}else navigate('home')})();
