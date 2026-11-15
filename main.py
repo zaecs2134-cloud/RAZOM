@@ -202,9 +202,11 @@ class HelpCreate(BaseModel):
 
 
 class GuestSubmit(BaseModel):
-    """Simpler guest form. No street address collected at the initial stage."""
+    """Guest form with an optional address; never published on the map."""
     category: Category
     city: str = Field(min_length=2, max_length=100)
+    # RAZOM 2.6: guest address (optional, kept in the existing private column).
+    address: str = Field(default="", max_length=250)
     description: str = Field(min_length=10, max_length=2000)
     phone: str = Field(min_length=7, max_length=30, pattern=r"^[+0-9() .\-]+$")
     people_count: int = Field(ge=1, le=100)
@@ -472,7 +474,7 @@ def submit_guest_request(payload: GuestSubmit, request: Request, db: Db, backgro
     item = HelpRequest(
         applicant_id=guest_user.id, title=titles[payload.category.value],
         description=payload.description.strip(), city=payload.city.strip(),
-        address="Уточнюється після зв'язку", phone=payload.phone.strip(),
+        address=payload.address.strip() or "Уточнюється після зв'язку", phone=payload.phone.strip(),
         category=payload.category.value, urgency=payload.urgency,
         people_count=payload.people_count, vulnerable_people=payload.vulnerable_people,
         status=RequestStatus.new.value,

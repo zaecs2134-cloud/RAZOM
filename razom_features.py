@@ -172,28 +172,41 @@ def needs_forecast(user: CurrentUser, db: Db):
 
 @router.get("/admin/geography")
 def geography(user: CurrentUser, db: Db):
-    """Admin-only city-level aggregates; never returns phone/address/coordinates of people."""
+    """RAZOM 2.6: admin-only city aggregates with evacuation counts and request IDs.
+
+    Never return a street address, phone number or an applicant's exact position.
+    The UI may resolve *settlement names only* to approximate centres.
+    """
     require(user, Role.admin)
     items = db.scalars(select(HelpRequest).where(
         HelpRequest.status.in_((RequestStatus.new.value, RequestStatus.assigned.value))
     ).limit(10001)).all()
     resources = db.scalars(select(Resource).where(Resource.quantity > 0).limit(10001)).all()
-    per_city = defaultdict(lambda: {"requests": 0, "resources": 0})
-    for item in items:
-        per_city[city_key(item.city)]["requests"] += 1
-    for resource in resources:
+    per_city = defaultdict(lambda: {
+        "requests": 0, "resources": 0,
+        "evacuation_requests": 0, "evacuation_request_ids": [],
+    })
+    for item in items[:10000]:
+        counts = per_city[city_key(item.city)]
+        counts["requests"] += 1
+        if item.category == "evacuation":
+            counts["evacuation_requests"] += 1
+            if len(counts["evacuation_request_ids"]) < 30:
+                counts["evacuation_request_ids"].append(item.id)
+    for resource in resources[:10000]:
         per_city[city_key(resource.city)]["resources"] += 1
     points, missing = [], []
     for city, counts in sorted(per_city.items()):
         coords = location(city)
+        record = {"city": city, **counts}
         if coords:
-            points.append({"city": city, "lat": coords[0], "lng": coords[1], **counts})
+            points.append({**record, "lat": coords[0], "lng": coords[1]})
         else:
-            missing.append({"city": city, **counts})
+            missing.append(record)
     return {
         "points": points, "unmapped": missing,
         "truncated": len(items) > 10000 or len(resources) > 10000,
-        "note": "Точки позначають приблизні центри міст, а не адреси заявників. Невідомі міста не вгадуються.",
+        "note": "Точки позначають центри населених пунктів, НЕ адреси заявників. Червоний колір — є потреба в евакуації.",
     }
 
 

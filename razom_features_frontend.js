@@ -63,52 +63,137 @@ async function razomLoadForecast() {
   } catch (e) { box.textContent = e.message; }
 }
 
+/* RAZOM 2.6: evacuation map and settlement-only geocoding */
+const razomSettlementCache = new Map();
+let razomGeocodeNextAt = 0;
+let razomGeoRun = 0;
+
+async function razomGeocodeSettlement(city) {
+  // Never send the separate street-address field to a third-party service.
+  const name = String(city || '').trim();
+  if (!name || /(^|[\s,])(вул\.?|вулиця|буд\.?|будинок|кв\.?|квартира|проспект|провулок|street)(?=[\s,.0-9]|$)/i.test(name)) return null;
+  const key = name.toLocaleLowerCase('uk');
+  if (razomSettlementCache.has(key)) return razomSettlementCache.get(key);
+  const now = Date.now();
+  const slot = Math.max(now, razomGeocodeNextAt);
+  razomGeocodeNextAt = slot + 1200; // Reserve a slot; max 1 request/s.
+  if (slot > now) await new Promise(resolve => setTimeout(resolve, slot - now));
+  const query = new URLSearchParams({q: `${name}, Україна`, format: 'jsonv2', limit: '1', countrycodes: 'ua'});
+  try {
+    const response = await fetch(`https://nominatim.openstreetmap.org/search?${query}`, {
+      headers: {'Accept': 'application/json'},
+    });
+    if (!response.ok) return null;
+    const results = await response.json();
+    const result = Array.isArray(results) ? results[0] : null;
+    const lat = Number(result?.lat), lng = Number(result?.lon);
+    const coords = result && Number.isFinite(lat) && Number.isFinite(lng) ? {lat, lng} : null;
+    razomSettlementCache.set(key, coords);
+    return coords;
+  } catch { return null; }
+}
+
 async function razomLoadGeography() {
   const info = $('geoInfo');
-  if (!info) return;
+  const summary = $('geoSummary');
+  if (!info || !summary || me?.role !== 'admin') return;
+  const run = ++razomGeoRun;
+  const filter = $('mapCategory')?.value || 'evacuation';
+  info.textContent = 'Завантаження заявок…';
   try {
     const data = await api('/admin/geography');
-    if (me?.role !== 'admin') return;
-    info.textContent = data.note + (data.unmapped.length
-      ? ` Не нанесено на карту: ${data.unmapped.map(p=>`${p.city} (${p.requests} заявок)`).join(', ')}.`
-      : '');
-    if (!data.points.length) info.textContent += ' Немає відкритих заявок у відомих містах: показано оглядову мапу України.';
+    if (run !== razomGeoRun || me?.role !== 'admin') return;
     const L = await razomLoadLeaflet();
-    if (me?.role !== 'admin') return;
+    if (run !== razomGeoRun || me?.role !== 'admin') return;
     razomClearMap();
     razomMap = L.map('geoMap', {scrollWheelZoom: false});
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors',
       maxZoom: 18,
     }).addTo(razomMap);
+    razomMap.setView([49.0, 31.0], 6);
+    const allCities = [...data.points, ...data.unmapped];
+    const total = allCities.reduce((sum, p) => sum + Number(p.requests || 0), 0);
+    const evacTotal = allCities.reduce((sum, p) => sum + Number(p.evacuation_requests || 0), 0);
+    summary.textContent = `Відкритих заявок: ${total}. З них на евакуацію: ${evacTotal}.`;
+    const showPoint = p => filter === 'all' ? Number(p.requests || 0) > 0 : Number(p.evacuation_requests || 0) > 0;
     const coords = [];
-    data.points.forEach(point => {
+    const addPoint = point => {
+      if (run !== razomGeoRun || me?.role !== 'admin' || !razomMap || !showPoint(point)) return;
+      const evac = Number(point.evacuation_requests || 0);
+      const totalRequests = Number(point.requests || 0);
+      const red = evac > 0;
       const pin = L.circleMarker([point.lat, point.lng], {
-        radius: Math.min(21, 6 + Math.sqrt(point.requests)*3), color: '#28684c',
-        fillColor: '#b9dfb9', fillOpacity: .78, weight: 2,
+        radius: Math.min(25, 13 + Math.sqrt(red ? evac : totalRequests) * 2),
+        color: red ? '#a41919' : '#236447',
+        fillColor: red ? '#d52b2b' : '#31885a', fillOpacity: 0.92, weight: 2,
       }).addTo(razomMap);
-      pin.bindPopup(`<b>${safe(point.city)}</b><p>Відкритих заявок: ${point.requests}<br>Позицій ресурсів: ${point.resources}</p>`);
+      pin.bindTooltip(String(red ? evac : totalRequests), {
+        permanent: true, direction: 'center', className: 'razom-map-count', opacity: 1,
+      });
+      const ids = (point.evacuation_request_ids || []).filter(id => Number.isInteger(id) && id > 0);
+      const buttons = ids.length ? `<div class="razom-map-requests">${ids.slice(0, 15).map(id =>
+        `<button type="button" class="btn btn-outline" data-map-request="${id}">Заявка №${id}</button>`).join('')}</div>` : '';
+      pin.bindPopup(`<b>${safe(point.city)}</b><p>🚨 Евакуація: <b>${evac}</b><br>Усього відкритих заявок: ${totalRequests}</p>${buttons}<p class="muted small">Позначка показує центр населеного пункту, а не адресу.</p>`);
+      pin.on('popupopen', event => {
+        const popup = event.popup.getElement();
+        popup?.querySelectorAll('[data-map-request]').forEach(button => {
+          button.onclick = async () => {
+            if (me?.role !== 'admin') return;
+            const id = Number(button.dataset.mapRequest);
+            if (!Number.isInteger(id)) return;
+            razomMap?.closePopup();
+            tab('requestsTab');
+            await showDetail(id); // Private address is fetched only after authorization.
+          };
+        });
+      });
       coords.push([point.lat, point.lng]);
-    });
-    if (!coords.length) razomMap.setView([49.0, 31.0], 6);
-    else if (coords.length === 1) razomMap.setView(coords[0], 9);
-    else razomMap.fitBounds(coords, {padding: [25, 25], maxZoom: 9});
-    razomMapBounds = coords;
-    // Routes are only candidate transfers between city centres, not actual road paths.
-    try {
-      const logistics = await api('/logistics/matches');
-      if (me?.role === 'admin' && razomMap) {
-        logistics.matches.filter(x => !x.same_city && x.from_lat != null && x.to_lat != null)
-          .slice(0, 12).forEach(x => {
-            const line = L.polyline([[x.from_lat, x.from_lng], [x.to_lat, x.to_lng]], {
-              color: '#bd7b22', weight: 2, opacity: .65, dashArray: '7,7',
-            }).addTo(razomMap);
-            line.bindPopup(`Можливе перевезення: ${safe(x.resource_city)} → ${safe(x.request_city)}. ${x.distance_km_straight} км по прямій.`);
-          });
-      }
-    } catch { /* Map still useful if logistic endpoint is unavailable. */ }
-    setTimeout(() => razomMap?.invalidateSize(), 200);
-  } catch (e) { info.textContent = e.message; }
+    };
+    const fitPoints = () => {
+      if (run !== razomGeoRun || !razomMap) return;
+      razomMapBounds = coords;
+      if (coords.length === 1) razomMap.setView(coords[0], 9);
+      else if (coords.length > 1) razomMap.fitBounds(coords, {padding: [30, 30], maxZoom: 9});
+      setTimeout(() => { if (run === razomGeoRun) razomMap?.invalidateSize(); }, 120);
+    };
+    data.points.forEach(addPoint);
+    fitPoints();
+    const unresolved = [];
+    const missingToResolve = data.unmapped.filter(showPoint);
+    const maxLookup = 8; // Avoid hammering public geocoding services.
+    if (missingToResolve.length) info.textContent = `Уточнюємо розташування ${Math.min(maxLookup, missingToResolve.length)} населених пунктів…`;
+    for (const point of missingToResolve.slice(0, maxLookup)) {
+      if (run !== razomGeoRun || me?.role !== 'admin') return;
+      const position = await razomGeocodeSettlement(point.city);
+      if (run !== razomGeoRun || me?.role !== 'admin') return;
+      if (position) { addPoint({...point, ...position}); fitPoints(); }
+      else unresolved.push(point.city);
+    }
+    unresolved.push(...missingToResolve.slice(maxLookup).map(p => p.city));
+    if (run !== razomGeoRun || me?.role !== 'admin') return;
+    info.textContent = data.note + (unresolved.length ? ` Не вдалося нанести: ${unresolved.join(', ')}. Уточніть область у полі «Населений пункт».` : '');
+    if (!coords.length) info.textContent += filter === 'evacuation'
+      ? ' Наразі немає відображених заявок на евакуацію. Перевірте також список ненанесених населених пунктів.'
+      : ' Наразі немає відкритих заявок для відображення.';
+    // Straight-line transport suggestions only, never actual evacuation routes.
+    if (filter === 'all') {
+      try {
+        const logistics = await api('/logistics/matches');
+        if (run === razomGeoRun && me?.role === 'admin' && razomMap) {
+          logistics.matches.filter(x => !x.same_city && x.from_lat != null && x.to_lat != null)
+            .slice(0, 12).forEach(x => {
+              L.polyline([[x.from_lat, x.from_lng], [x.to_lat, x.to_lng]], {
+                color: '#bd7b22', weight: 2, opacity: 0.65, dashArray: '7,7',
+              }).addTo(razomMap).bindPopup(`Можливе перевезення: ${safe(x.resource_city)} → ${safe(x.request_city)}. ${x.distance_km_straight} км по прямій.`);
+            });
+        }
+      } catch { /* Map still works without logistics. */ }
+    }
+    fitPoints();
+  } catch (error) {
+    if (run === razomGeoRun) info.textContent = `Не вдалося завантажити мапу: ${error.message}`;
+  }
 }
 
 async function razomLoadAdminFeatures() {
@@ -175,9 +260,11 @@ clearSensitive = function() {
   for(const id of ['duplicateMatches','forecastCards','geoInfo','logisticsList']) {
     const el = $(id); if(el) el.textContent = '';
   }
+  razomGeoRun++;
   razomClearMap();
 };
 $('refreshMap').onclick = () => { if (me?.role === 'admin') razomLoadGeography(); };
+$('mapCategory').onchange = () => { if (me?.role === 'admin') razomLoadGeography(); };
 const razomOriginalTab = tab;
 tab = function(name) {
   razomOriginalTab(name);

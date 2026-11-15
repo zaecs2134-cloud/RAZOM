@@ -23,6 +23,7 @@
 .feature-card{border:1px solid #d8e8de;background:#f8fbf8;border-radius:12px;padding:16px}
 .feature-card p{margin:6px 0}
 #geoMap{height:350px;min-height:300px;border:1px solid #c9dccc;border-radius:13px;margin-top:13px;z-index:0}
+.leaflet-tooltip.razom-map-count{background:transparent;border:0;box-shadow:none;color:white;font-size:14px;font-weight:800;text-shadow:0 1px 3px #0009;pointer-events:none}.leaflet-tooltip.razom-map-count:before{display:none}.razom-map-requests{display:flex;flex-wrap:wrap;gap:5px}.razom-map-requests .btn{padding:5px 9px;min-height:30px;font-size:12px}
 @media(max-width:700px){#geoMap{height:290px}}
 </style>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -52,7 +53,9 @@
    <label class="radio-card"><input type="radio" name="category" value="other"> Інша допомога</label>
   </div><p class="form-help">Якщо потрібна негайна допомога, не чекайте відповіді з цього сайту.</p></div>
   <div id="step2" class="hidden"><h3>Розкажіть про ситуацію</h3>
-   <div class="form-field"><label for="hcity">Населений пункт</label><input class="control" id="hcity" name="city" minlength="2" maxlength="100" placeholder="Наприклад, Львів" required autocomplete="address-level2"></div>
+   <div class="form-field"><label for="hcity">Населений пункт</label><input class="control" id="hcity" name="city" minlength="2" maxlength="100" placeholder="Наприклад, Львів або с. Приклад, Чернігівська область" required autocomplete="address-level2"><p class="form-help">Для невеликого села додайте область. Вулицю та номер будинку вкажіть окремо нижче.</p></div>
+   <!-- RAZOM 2.6: optional address and evacuation map -->
+   <div class="form-field"><label for="haddress">Адреса (необов'язково)</label><input class="control" id="haddress" name="address" maxlength="250" placeholder="Наприклад, вул. Тестова, 10" autocomplete="street-address"><p class="form-help">Для цієї демонстрації вказуйте лише вигадану адресу. Її побачать тільки адміністратор і волонтер, який взяв заявку; на мапі адреси не показуються.</p></div>
    <div class="form-field"><label for="hdescription">Що саме вам необхідно?</label><textarea class="control" id="hdescription" name="description" minlength="10" maxlength="2000" placeholder="Опишіть потрібну допомогу без приватних медичних подробиць" required></textarea></div>
    <div class="form-field"><label for="hpeople">Для скількох людей?</label><input class="control" id="hpeople" name="people_count" type="number" min="1" max="100" value="1" required></div>
    <details><summary>Додаткова інформація (необов'язково)</summary><div class="form-field"><label for="hurgency">Як швидко потрібна допомога?</label><select class="control" id="hurgency" name="urgency"><option value="1">Може зачекати</option><option value="3" selected>Найближчим часом</option><option value="5">Якомога швидше</option></select></div><label class="consent"><input type="checkbox" id="hvuln" name="vulnerable_people"> Серед нас є люди, яким потрібна додаткова увага</label></details>
@@ -91,7 +94,11 @@
  <div id="mapTab" class="panel hidden">
   <h2>🗺️ Мапа звернень</h2>
   <p class="muted small">Показано лише приблизні центри міст, без адрес людей. Пунктирні лінії — можливі перевезення по прямій, а не реальні дороги.</p>
-  <button type="button" class="btn btn-outline" id="refreshMap">Оновити мапу</button>
+  <div class="tools" style="margin:14px 0">
+   <div class="form-field" style="margin:0"><label for="mapCategory">Показати на мапі</label><select id="mapCategory" class="control"><option value="evacuation" selected>🚨 Потрібна евакуація</option><option value="all">Усі відкриті заявки</option></select></div>
+   <button type="button" class="btn btn-outline" id="refreshMap">Оновити мапу</button>
+  </div>
+  <p id="geoSummary" class="muted" role="status" aria-live="polite"></p>
   <div id="geoMap" role="region" aria-label="Карта звернень по містах"></div>
   <p class="muted small" id="geoInfo" role="status" aria-live="polite"></p>
  </div>
@@ -119,11 +126,11 @@ return r.json()}
 function navigate(id){showView(id);if(id==='auth')$('loginEmail').focus();if(id==='track')$('trackId').focus();}
 $('brandLink').onclick=e=>{e.preventDefault();navigate('home')};$('navHome').onclick=()=>navigate('home');$('navTrack').onclick=()=>navigate('track');$('navLogin').onclick=()=>navigate('auth');
 $('startHelp').onclick=()=>{stage=1;updateStage();navigate('help')};$('startVolunteer').onclick=()=>{$('volunteerDetails').open=true;navigate('auth')};$('receiptTrack').onclick=()=>{$('trackId').value=receipt.request_id;$('trackCode').value=receipt.tracking_code;navigate('track')};
-function updateStage(){for(let i=1;i<=3;i++)toggle('step'+i,i===stage);$('stepLabel').textContent=`Крок ${stage} із 3`;$('stepPercent').textContent=`${Math.round(stage/3*100)}%`;$('stepBar').style.width=`${Math.round(stage/3*100)}%`;toggle('prevStep',stage>1);toggle('nextStep',stage<3);toggle('sendHelp',stage===3);toggle('helpError',false);if(stage===3){const f=formData($('helpForm'));$('helpReview').textContent=`${categories[f.category]||''}. ${f.city||''}. Для ${f.people_count||1} людей. ${f.description||''}`} }
-function stepValid(){const ids=stage===1?[]:stage===2?['hcity','hdescription','hpeople']:['hphone','hconsent'];if(stage===1&&!document.querySelector('input[name="category"]:checked')){setHelpError('Оберіть, яка допомога вам потрібна.');return false}for(const id of ids){if(!$(id).checkValidity()){$(id).reportValidity();return false}}return true}
+function updateStage(){for(let i=1;i<=3;i++)toggle('step'+i,i===stage);$('stepLabel').textContent=`Крок ${stage} із 3`;$('stepPercent').textContent=`${Math.round(stage/3*100)}%`;$('stepBar').style.width=`${Math.round(stage/3*100)}%`;toggle('prevStep',stage>1);toggle('nextStep',stage<3);toggle('sendHelp',stage===3);toggle('helpError',false);if(stage===3){const f=formData($('helpForm'));$('helpReview').textContent=`${categories[f.category]||''}. ${f.city||''}. Адреса: ${f.address?.trim()||'не вказана'}. Для ${f.people_count||1} людей. ${f.description||''}`} }
+function stepValid(){const ids=stage===1?[]:stage===2?['hcity','haddress','hdescription','hpeople']:['hphone','hconsent'];if(stage===1&&!document.querySelector('input[name="category"]:checked')){setHelpError('Оберіть, яка допомога вам потрібна.');return false}for(const id of ids){if(!$(id).checkValidity()){$(id).reportValidity();return false}}return true}
 function setHelpError(msg){$('helpError').textContent=msg;toggle('helpError',true)}
 $('nextStep').onclick=()=>{if(stepValid()){stage++;updateStage();$('helpHeading').focus?.()}};$('prevStep').onclick=()=>{stage--;updateStage()};
-$('helpForm').onsubmit=async(e)=>{e.preventDefault();if(!stepValid())return;const f=formData(e.target);const body={category:f.category,city:f.city.trim(),description:f.description.trim(),phone:f.phone.trim(),people_count:Number(f.people_count),urgency:Number(f.urgency||3),vulnerable_people:!!f.vulnerable_people,consent:!!f.consent,website:f.website||''};$('sendHelp').disabled=true;try{receipt=await api('/public/requests','POST',body);$('receiptId').textContent=receipt.request_id;$('receiptCode').textContent=receipt.tracking_code;e.target.reset();showView('receiptPanel')}catch(err){setHelpError(err.message)}finally{$('sendHelp').disabled=false}};
+$('helpForm').onsubmit=async(e)=>{e.preventDefault();if(!stepValid())return;const f=formData(e.target);const body={category:f.category,city:f.city.trim(),address:(f.address||'').trim(),description:f.description.trim(),phone:f.phone.trim(),people_count:Number(f.people_count),urgency:Number(f.urgency||3),vulnerable_people:!!f.vulnerable_people,consent:!!f.consent,website:f.website||''};$('sendHelp').disabled=true;try{receipt=await api('/public/requests','POST',body);$('receiptId').textContent=receipt.request_id;$('receiptCode').textContent=receipt.tracking_code;e.target.reset();showView('receiptPanel')}catch(err){setHelpError(err.message)}finally{$('sendHelp').disabled=false}};
 $('copyReceipt').onclick=async()=>{if(!receipt)return;const value=`RAZOM — тестова заявка\nНомер: ${receipt.request_id}\nКод: ${receipt.tracking_code}`;try{await navigator.clipboard.writeText(value);notify('Номер і код скопійовано')}catch{notify('Виділіть і скопіюйте номер та код вручну',true)}};
 $('trackForm').onsubmit=async e=>{e.preventDefault();const f=formData(e.target);try{const r=await api('/public/requests/status','POST',{request_id:Number(f.request_id),tracking_code:f.tracking_code.trim()});const s=r.needs_review?'Заявка отримана, очікує перевірки':states[r.status]||r.status;$('trackResult').innerHTML=`<div class="result"><span class="badge">Заявка №${r.request_id}</span><h3>${safe(s)}</h3><p>Категорія: ${safe(categories[r.category]||r.category)} · Місто: ${safe(r.city)}</p></div>`}catch(err){$('trackResult').innerHTML=`<div class="message error" role="alert">${safe(err.message)}</div>`}};
 async function login(email,password){const form=new URLSearchParams({username:email,password});const r=await fetch('/auth/login',{method:'POST',body:form});if(!r.ok)throw Error('Неправильна пошта або пароль');const obj=await r.json();token=obj.access_token;sessionStorage.setItem('access_token',token);await renderDashboard()}
@@ -150,7 +157,7 @@ async function showDetail(id){try{const r=await api(`/requests/${id}`);let html=
 async function loadResources(){try{inventory=await api('/resources');$('myResources').innerHTML=inventory.length?inventory.map(r=>`<article class="queue-item"><b>${safe(r.name)}</b><div class="queue-meta">${safe(categories[r.category]||r.category)} · ${safe(r.city)}</div><p><b>${r.quantity} ${safe(r.unit)}</b></p></article>`).join(''):'<p class="muted">Ресурсів ще немає.</p>'}catch(err){notify(err.message,true)}}
 $('resourceForm').onsubmit=async e=>{e.preventDefault();const f=formData(e.target);try{await api('/resources','POST',{...f,quantity:Number(f.quantity)});notify('Ресурс збережено');e.target.reset();await loadResources();if(me.role==='volunteer')await loadSuggestions()}catch(err){notify(err.message,true)}};
 async function loadSuggestions(){try{const data=await api('/suggestions');$('suggestionList').innerHTML=data.length?data.map(s=>`<article class="queue-item"><b>${safe(s.request.title)}</b><p class="queue-meta">${safe(s.request.city)} · відповідних позицій: ${s.compatible_resources.length}</p></article>`).join(''):'<p class="muted">Зараз немає заявок, що відповідають вашому інвентарю.</p>'}catch(err){notify(err.message,true)}}
-async function loadAnalytics(){if(me.role!=='admin')return;try{const [a,vol,guest]=await Promise.all([api('/admin/analytics'),api('/admin/volunteers'),api('/admin/guest-requests/pending')]);$('stats').innerHTML=`<div><b>${a.requests_total}</b>Всього заявок</div><div><b>${a.verified_volunteers}</b>Перевірених волонтерів</div><div><b>${guest.length}</b>Заявок на перевірці</div>`;$('pendingVolunteers').innerHTML=vol.length?vol.map(v=>`<article class="queue-item"><b>${safe(v.full_name)}</b><p>${safe(v.email)}</p><button class="btn" data-verify="${v.id}">Підтвердити волонтера</button></article>`).join(''):'<p class="muted">Нових волонтерів немає.</p>';$('guestReviewList').innerHTML=guest.length?guest.map(r=>`<article class="queue-item"><span class="badge">${safe(categories[r.category])}</span><h3>Заявка №${r.id}</h3><p>${safe(r.city)} · ${r.people_count} люд.</p><div class="actions"><button class="btn btn-outline" data-review-detail="${r.id}">Переглянути контакти</button><button class="btn" data-review="${r.id}">Перевірено — відкрити волонтерам</button></div><div id="reviewDetails${r.id}"></div></article>`).join(''):'<p class="muted">Усі гостьові заявки перевірено.</p>';$('statusStats').innerHTML=Object.entries(a.by_status).map(([s,n])=>`<p>${safe(states[s]||s)}: <b>${n}</b></p>`).join('');document.querySelectorAll('[data-verify]').forEach(b=>b.onclick=async()=>{try{await api(`/admin/users/${b.dataset.verify}/verify`,'PATCH');notify('Волонтера підтверджено');await loadAnalytics()}catch(err){notify(err.message,true)}});document.querySelectorAll('[data-review-detail]').forEach(b=>b.onclick=async()=>{try{const r=await api(`/requests/${b.dataset.reviewDetail}`);$(`reviewDetails${r.id}`).innerHTML=`<div class="result"><b>Тестовий контакт:</b><p>${safe(r.phone)}</p><p>${safe(r.description)}</p></div>`}catch(err){notify(err.message,true)}});document.querySelectorAll('[data-review]').forEach(b=>b.onclick=async()=>{if(!confirm('Підтвердіть лише після перевірки заявки та контакту. Продовжити?'))return;try{await api(`/admin/guest-requests/${b.dataset.review}/review`,'PATCH');notify('Заявку відкрито волонтерам');await loadAnalytics();await loadRequests()}catch(err){notify(err.message,true)}})}catch(err){notify(err.message,true)}}
+async function loadAnalytics(){if(me.role!=='admin')return;try{const [a,vol,guest]=await Promise.all([api('/admin/analytics'),api('/admin/volunteers'),api('/admin/guest-requests/pending')]);$('stats').innerHTML=`<div><b>${a.requests_total}</b>Всього заявок</div><div><b>${a.verified_volunteers}</b>Перевірених волонтерів</div><div><b>${guest.length}</b>Заявок на перевірці</div>`;$('pendingVolunteers').innerHTML=vol.length?vol.map(v=>`<article class="queue-item"><b>${safe(v.full_name)}</b><p>${safe(v.email)}</p><button class="btn" data-verify="${v.id}">Підтвердити волонтера</button></article>`).join(''):'<p class="muted">Нових волонтерів немає.</p>';$('guestReviewList').innerHTML=guest.length?guest.map(r=>`<article class="queue-item"><span class="badge">${safe(categories[r.category])}</span><h3>Заявка №${r.id}</h3><p>${safe(r.city)} · ${r.people_count} люд.</p><div class="actions"><button class="btn btn-outline" data-review-detail="${r.id}">Переглянути контакти</button><button class="btn" data-review="${r.id}">Перевірено — відкрити волонтерам</button></div><div id="reviewDetails${r.id}"></div></article>`).join(''):'<p class="muted">Усі гостьові заявки перевірено.</p>';$('statusStats').innerHTML=Object.entries(a.by_status).map(([s,n])=>`<p>${safe(states[s]||s)}: <b>${n}</b></p>`).join('');document.querySelectorAll('[data-verify]').forEach(b=>b.onclick=async()=>{try{await api(`/admin/users/${b.dataset.verify}/verify`,'PATCH');notify('Волонтера підтверджено');await loadAnalytics()}catch(err){notify(err.message,true)}});document.querySelectorAll('[data-review-detail]').forEach(b=>b.onclick=async()=>{try{const r=await api(`/requests/${b.dataset.reviewDetail}`);$(`reviewDetails${r.id}`).innerHTML=`<div class="result"><b>Тестовий контакт:</b><p>${safe(r.phone)}</p><p><b>Населений пункт:</b> ${safe(r.city)}</p><p><b>Адреса:</b> ${safe(r.address)}</p><p>${safe(r.description)}</p></div>`}catch(err){notify(err.message,true)}});document.querySelectorAll('[data-review]').forEach(b=>b.onclick=async()=>{if(!confirm('Підтвердіть лише після перевірки заявки та контакту. Продовжити?'))return;try{await api(`/admin/guest-requests/${b.dataset.review}/review`,'PATCH');notify('Заявку відкрито волонтерам');await loadAnalytics();await loadRequests()}catch(err){notify(err.message,true)}})}catch(err){notify(err.message,true)}}
 /* RAZOM 2.5 extras — inserted into web/index.html by apply_razom_upgrade.py */
 let razomMap = null;
 let razomMapLayers = [];
@@ -216,52 +223,137 @@ async function razomLoadForecast() {
   } catch (e) { box.textContent = e.message; }
 }
 
+/* RAZOM 2.6: evacuation map and settlement-only geocoding */
+const razomSettlementCache = new Map();
+let razomGeocodeNextAt = 0;
+let razomGeoRun = 0;
+
+async function razomGeocodeSettlement(city) {
+  // Never send the separate street-address field to a third-party service.
+  const name = String(city || '').trim();
+  if (!name || /(^|[\s,])(вул\.?|вулиця|буд\.?|будинок|кв\.?|квартира|проспект|провулок|street)(?=[\s,.0-9]|$)/i.test(name)) return null;
+  const key = name.toLocaleLowerCase('uk');
+  if (razomSettlementCache.has(key)) return razomSettlementCache.get(key);
+  const now = Date.now();
+  const slot = Math.max(now, razomGeocodeNextAt);
+  razomGeocodeNextAt = slot + 1200; // Reserve a slot; max 1 request/s.
+  if (slot > now) await new Promise(resolve => setTimeout(resolve, slot - now));
+  const query = new URLSearchParams({q: `${name}, Україна`, format: 'jsonv2', limit: '1', countrycodes: 'ua'});
+  try {
+    const response = await fetch(`https://nominatim.openstreetmap.org/search?${query}`, {
+      headers: {'Accept': 'application/json'},
+    });
+    if (!response.ok) return null;
+    const results = await response.json();
+    const result = Array.isArray(results) ? results[0] : null;
+    const lat = Number(result?.lat), lng = Number(result?.lon);
+    const coords = result && Number.isFinite(lat) && Number.isFinite(lng) ? {lat, lng} : null;
+    razomSettlementCache.set(key, coords);
+    return coords;
+  } catch { return null; }
+}
+
 async function razomLoadGeography() {
   const info = $('geoInfo');
-  if (!info) return;
+  const summary = $('geoSummary');
+  if (!info || !summary || me?.role !== 'admin') return;
+  const run = ++razomGeoRun;
+  const filter = $('mapCategory')?.value || 'evacuation';
+  info.textContent = 'Завантаження заявок…';
   try {
     const data = await api('/admin/geography');
-    if (me?.role !== 'admin') return;
-    info.textContent = data.note + (data.unmapped.length
-      ? ` Не нанесено на карту: ${data.unmapped.map(p=>`${p.city} (${p.requests} заявок)`).join(', ')}.`
-      : '');
-    if (!data.points.length) info.textContent += ' Немає відкритих заявок у відомих містах: показано оглядову мапу України.';
+    if (run !== razomGeoRun || me?.role !== 'admin') return;
     const L = await razomLoadLeaflet();
-    if (me?.role !== 'admin') return;
+    if (run !== razomGeoRun || me?.role !== 'admin') return;
     razomClearMap();
     razomMap = L.map('geoMap', {scrollWheelZoom: false});
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors',
       maxZoom: 18,
     }).addTo(razomMap);
+    razomMap.setView([49.0, 31.0], 6);
+    const allCities = [...data.points, ...data.unmapped];
+    const total = allCities.reduce((sum, p) => sum + Number(p.requests || 0), 0);
+    const evacTotal = allCities.reduce((sum, p) => sum + Number(p.evacuation_requests || 0), 0);
+    summary.textContent = `Відкритих заявок: ${total}. З них на евакуацію: ${evacTotal}.`;
+    const showPoint = p => filter === 'all' ? Number(p.requests || 0) > 0 : Number(p.evacuation_requests || 0) > 0;
     const coords = [];
-    data.points.forEach(point => {
+    const addPoint = point => {
+      if (run !== razomGeoRun || me?.role !== 'admin' || !razomMap || !showPoint(point)) return;
+      const evac = Number(point.evacuation_requests || 0);
+      const totalRequests = Number(point.requests || 0);
+      const red = evac > 0;
       const pin = L.circleMarker([point.lat, point.lng], {
-        radius: Math.min(21, 6 + Math.sqrt(point.requests)*3), color: '#28684c',
-        fillColor: '#b9dfb9', fillOpacity: .78, weight: 2,
+        radius: Math.min(25, 13 + Math.sqrt(red ? evac : totalRequests) * 2),
+        color: red ? '#a41919' : '#236447',
+        fillColor: red ? '#d52b2b' : '#31885a', fillOpacity: 0.92, weight: 2,
       }).addTo(razomMap);
-      pin.bindPopup(`<b>${safe(point.city)}</b><p>Відкритих заявок: ${point.requests}<br>Позицій ресурсів: ${point.resources}</p>`);
+      pin.bindTooltip(String(red ? evac : totalRequests), {
+        permanent: true, direction: 'center', className: 'razom-map-count', opacity: 1,
+      });
+      const ids = (point.evacuation_request_ids || []).filter(id => Number.isInteger(id) && id > 0);
+      const buttons = ids.length ? `<div class="razom-map-requests">${ids.slice(0, 15).map(id =>
+        `<button type="button" class="btn btn-outline" data-map-request="${id}">Заявка №${id}</button>`).join('')}</div>` : '';
+      pin.bindPopup(`<b>${safe(point.city)}</b><p>🚨 Евакуація: <b>${evac}</b><br>Усього відкритих заявок: ${totalRequests}</p>${buttons}<p class="muted small">Позначка показує центр населеного пункту, а не адресу.</p>`);
+      pin.on('popupopen', event => {
+        const popup = event.popup.getElement();
+        popup?.querySelectorAll('[data-map-request]').forEach(button => {
+          button.onclick = async () => {
+            if (me?.role !== 'admin') return;
+            const id = Number(button.dataset.mapRequest);
+            if (!Number.isInteger(id)) return;
+            razomMap?.closePopup();
+            tab('requestsTab');
+            await showDetail(id); // Private address is fetched only after authorization.
+          };
+        });
+      });
       coords.push([point.lat, point.lng]);
-    });
-    if (!coords.length) razomMap.setView([49.0, 31.0], 6);
-    else if (coords.length === 1) razomMap.setView(coords[0], 9);
-    else razomMap.fitBounds(coords, {padding: [25, 25], maxZoom: 9});
-    razomMapBounds = coords;
-    // Routes are only candidate transfers between city centres, not actual road paths.
-    try {
-      const logistics = await api('/logistics/matches');
-      if (me?.role === 'admin' && razomMap) {
-        logistics.matches.filter(x => !x.same_city && x.from_lat != null && x.to_lat != null)
-          .slice(0, 12).forEach(x => {
-            const line = L.polyline([[x.from_lat, x.from_lng], [x.to_lat, x.to_lng]], {
-              color: '#bd7b22', weight: 2, opacity: .65, dashArray: '7,7',
-            }).addTo(razomMap);
-            line.bindPopup(`Можливе перевезення: ${safe(x.resource_city)} → ${safe(x.request_city)}. ${x.distance_km_straight} км по прямій.`);
-          });
-      }
-    } catch { /* Map still useful if logistic endpoint is unavailable. */ }
-    setTimeout(() => razomMap?.invalidateSize(), 200);
-  } catch (e) { info.textContent = e.message; }
+    };
+    const fitPoints = () => {
+      if (run !== razomGeoRun || !razomMap) return;
+      razomMapBounds = coords;
+      if (coords.length === 1) razomMap.setView(coords[0], 9);
+      else if (coords.length > 1) razomMap.fitBounds(coords, {padding: [30, 30], maxZoom: 9});
+      setTimeout(() => { if (run === razomGeoRun) razomMap?.invalidateSize(); }, 120);
+    };
+    data.points.forEach(addPoint);
+    fitPoints();
+    const unresolved = [];
+    const missingToResolve = data.unmapped.filter(showPoint);
+    const maxLookup = 8; // Avoid hammering public geocoding services.
+    if (missingToResolve.length) info.textContent = `Уточнюємо розташування ${Math.min(maxLookup, missingToResolve.length)} населених пунктів…`;
+    for (const point of missingToResolve.slice(0, maxLookup)) {
+      if (run !== razomGeoRun || me?.role !== 'admin') return;
+      const position = await razomGeocodeSettlement(point.city);
+      if (run !== razomGeoRun || me?.role !== 'admin') return;
+      if (position) { addPoint({...point, ...position}); fitPoints(); }
+      else unresolved.push(point.city);
+    }
+    unresolved.push(...missingToResolve.slice(maxLookup).map(p => p.city));
+    if (run !== razomGeoRun || me?.role !== 'admin') return;
+    info.textContent = data.note + (unresolved.length ? ` Не вдалося нанести: ${unresolved.join(', ')}. Уточніть область у полі «Населений пункт».` : '');
+    if (!coords.length) info.textContent += filter === 'evacuation'
+      ? ' Наразі немає відображених заявок на евакуацію. Перевірте також список ненанесених населених пунктів.'
+      : ' Наразі немає відкритих заявок для відображення.';
+    // Straight-line transport suggestions only, never actual evacuation routes.
+    if (filter === 'all') {
+      try {
+        const logistics = await api('/logistics/matches');
+        if (run === razomGeoRun && me?.role === 'admin' && razomMap) {
+          logistics.matches.filter(x => !x.same_city && x.from_lat != null && x.to_lat != null)
+            .slice(0, 12).forEach(x => {
+              L.polyline([[x.from_lat, x.from_lng], [x.to_lat, x.to_lng]], {
+                color: '#bd7b22', weight: 2, opacity: 0.65, dashArray: '7,7',
+              }).addTo(razomMap).bindPopup(`Можливе перевезення: ${safe(x.resource_city)} → ${safe(x.request_city)}. ${x.distance_km_straight} км по прямій.`);
+            });
+        }
+      } catch { /* Map still works without logistics. */ }
+    }
+    fitPoints();
+  } catch (error) {
+    if (run === razomGeoRun) info.textContent = `Не вдалося завантажити мапу: ${error.message}`;
+  }
 }
 
 async function razomLoadAdminFeatures() {
@@ -328,9 +420,11 @@ clearSensitive = function() {
   for(const id of ['duplicateMatches','forecastCards','geoInfo','logisticsList']) {
     const el = $(id); if(el) el.textContent = '';
   }
+  razomGeoRun++;
   razomClearMap();
 };
 $('refreshMap').onclick = () => { if (me?.role === 'admin') razomLoadGeography(); };
+$('mapCategory').onchange = () => { if (me?.role === 'admin') razomLoadGeography(); };
 const razomOriginalTab = tab;
 tab = function(name) {
   razomOriginalTab(name);
