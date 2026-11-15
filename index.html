@@ -17,7 +17,15 @@
 .tier-badge{display:inline-block;border-radius:100px;font-size:.82rem;font-weight:800;padding:4px 11px;color:#fff}.tier-badge.tier-critical{background:#b3261e}.tier-badge.tier-high{background:#c25e00}.tier-badge.tier-normal{background:#8a6d00}.tier-badge.tier-can_wait{background:#2e7d4f}
 .queue-item.tier-critical{border-left:6px solid #b3261e}.queue-item.tier-high{border-left:6px solid #c25e00}.queue-item.tier-normal{border-left:6px solid #8a6d00}.queue-item.tier-can_wait{border-left:6px solid #2e7d4f}
 .flash{animation:flash 2.4s}@keyframes flash{0%,70%{box-shadow:0 0 0 4px #abcfb8}100%{box-shadow:none}}
+
+/* RAZOM: аналітика, дублікати, карта */
+.feature-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(195px,1fr));gap:12px;margin:16px 0}
+.feature-card{border:1px solid #d8e8de;background:#f8fbf8;border-radius:12px;padding:16px}
+.feature-card p{margin:6px 0}
+#geoMap{height:350px;min-height:300px;border:1px solid #c9dccc;border-radius:13px;margin-top:13px;z-index:0}
+@media(max-width:700px){#geoMap{height:290px}}
 </style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
 <body>
 <header class="site-header"><div class="wrap header-row">
@@ -66,8 +74,24 @@
  <div id="pendingNotice" class="important hidden">Ваш обліковий запис очікує підтвердження адміністрацією. Приватні дані заявників наразі недоступні.</div>
  <div class="tabs" role="group" aria-label="Розділи кабінету"><button class="tab active" type="button" data-tab="requestsTab">Заявки</button><button class="tab" type="button" data-tab="resourcesTab" id="resourcesTabButton">Ресурси</button><button class="tab hidden" type="button" data-tab="analyticsTab" id="analyticsTabButton">Адміністрування</button></div>
  <div id="requestsTab" class="panel"><h2>Заявки на допомогу</h2><p class="muted">Сортування за пріоритетом — рекомендація, рішення залишається за волонтером.</p><div class="tools"><div class="form-field"><label for="filterCity">Місто</label><input class="control" id="filterCity" placeholder="Усі міста"></div><div class="form-field"><label for="filterCategory">Категорія</label><select class="control" id="filterCategory"><option value="">Усі категорії</option><option value="food">Продукти</option><option value="medicine">Ліки</option><option value="evacuation">Евакуація</option><option value="other">Інше</option></select></div><button id="refresh" type="button" class="btn btn-outline">Оновити</button></div><div id="queueSwitch" class="qswitch hidden"><div class="qtabs" role="group" aria-label="Тип черги"><button type="button" class="qtab active" id="qPriority">🚨 За потребою</button><button type="button" class="qtab" id="qTime">🕒 За часом</button></div><button type="button" class="btn btn-outline hidden" id="qOrder">Спочатку нові ↓</button></div><div id="queueSummary" class="queue-meta"></div><div id="queue" aria-live="polite"></div><div id="inProgress"></div><div id="requestDetail"></div><div class="divider"></div><h3 id="suggestionsHeading">Рекомендовані заявки</h3><div id="suggestionList"></div></div>
- <div id="resourcesTab" class="panel hidden"><h2>Мої ресурси</h2><p class="muted">Ведіть облік доступної допомоги.</p><form id="resourceForm"><div class="form-field"><label for="resourceName">Назва ресурсу</label><input class="control" id="resourceName" name="name" placeholder="Наприклад, продуктові набори" required minlength="2"></div><div class="split"><div class="form-field"><label for="resourceType">Категорія</label><select class="control" id="resourceType" name="category"><option value="food">Продукти</option><option value="medicine">Ліки</option><option value="transport">Транспорт</option><option value="other">Інше</option></select></div><div class="form-field"><label for="resourceCity">Місто</label><input class="control" id="resourceCity" name="city" required minlength="2"></div></div><div class="split"><div class="form-field"><label for="resourceQty">Кількість</label><input class="control" id="resourceQty" name="quantity" type="number" min="1" value="1" required></div><div class="form-field"><label for="resourceUnit">Одиниця виміру</label><input class="control" id="resourceUnit" name="unit" value="шт." required></div></div><button class="btn">Додати ресурс</button></form><div class="divider"></div><h3>Доступні ресурси</h3><div id="myResources"></div></div>
- <div id="analyticsTab" class="panel hidden"><h2>Адміністрування</h2><div id="stats" class="summary"></div><div class="divider"></div><h3>Нові заявки без реєстрації</h3><p class="muted">Зв'яжіться з людиною за тестовими контактами, перевірте звернення і лише після цього відкривайте заявку волонтерам.</p><div id="guestReviewList"></div><div class="divider"></div><h3>Перевірка волонтерів</h3><div id="pendingVolunteers"></div><div class="divider"></div><h3>Статистика за статусами</h3><div id="statusStats"></div></div>
+ <div id="resourcesTab" class="panel hidden"><h2>Мої ресурси</h2><p class="muted">Ведіть облік доступної допомоги.</p><form id="resourceForm"><div class="form-field"><label for="resourceName">Назва ресурсу</label><input class="control" id="resourceName" name="name" placeholder="Наприклад, продуктові набори" required minlength="2"></div><div class="split"><div class="form-field"><label for="resourceType">Категорія</label><select class="control" id="resourceType" name="category"><option value="food">Продукти</option><option value="medicine">Ліки</option><option value="transport">Транспорт</option><option value="other">Інше</option></select></div><div class="form-field"><label for="resourceCity">Місто</label><input class="control" id="resourceCity" name="city" required minlength="2"></div></div><div class="split"><div class="form-field"><label for="resourceQty">Кількість</label><input class="control" id="resourceQty" name="quantity" type="number" min="1" value="1" required></div><div class="form-field"><label for="resourceUnit">Одиниця виміру</label><input class="control" id="resourceUnit" name="unit" value="шт." required></div></div><button class="btn">Додати ресурс</button></form><div class="divider"></div><h3>Доступні ресурси</h3><div id="myResources"></div>
+<div class="divider"></div>
+<h3>Можлива допомога в сусідніх містах</h3>
+<p class="muted small">Орієнтовні відповідності для планування логістики. Перевезення необхідно узгоджувати окремо.</p>
+<div id="logisticsList"></div>
+</div>
+ <div id="analyticsTab" class="panel hidden"><h2>Адміністрування</h2><div id="stats" class="summary"></div><div class="divider"></div><h3>Нові заявки без реєстрації</h3><p class="muted">Зв'яжіться з людиною за тестовими контактами, перевірте звернення і лише після цього відкривайте заявку волонтерам.</p><div id="guestReviewList"></div><div class="divider"></div><h3>Перевірка волонтерів</h3><div id="pendingVolunteers"></div><div class="divider"></div><h3>Статистика за статусами</h3>
+<div class="divider"></div>
+<h3>Можливі дублікати заявок</h3><p class="muted small">Система лише попереджає про схожі звернення — не видаляє заявки автоматично.</p>
+<div id="duplicateMatches"></div>
+<div class="divider"></div>
+<h3>Прогноз потреб</h3><p class="muted small">Орієнтовний тренд за історією заявок. За недостатньої кількості даних прогноз не показується.</p>
+<div id="forecastCards"></div>
+<div class="divider"></div>
+<h3>Географічна карта і логістика</h3><p class="muted small">На карті — приблизні центри міст, не адреси людей. Пунктиром показані можливі перевезення по прямій, не реальні дороги.</p>
+<div id="geoMap" role="region" aria-label="Карта звернень по містах"></div>
+<p class="muted small" id="geoInfo"></p>
+<div id="statusStats"></div></div>
 </section>
 <div id="notice" class="hidden" role="status" aria-live="polite"></div>
 <footer class="site-footer"><div class="wrap">RAZOM • Навчальний проєкт МАН • Тестуйте лише з вигаданими даними. Не є екстреною службою.</div></footer>
@@ -124,6 +148,194 @@ async function loadResources(){try{inventory=await api('/resources');$('myResour
 $('resourceForm').onsubmit=async e=>{e.preventDefault();const f=formData(e.target);try{await api('/resources','POST',{...f,quantity:Number(f.quantity)});notify('Ресурс збережено');e.target.reset();await loadResources();if(me.role==='volunteer')await loadSuggestions()}catch(err){notify(err.message,true)}};
 async function loadSuggestions(){try{const data=await api('/suggestions');$('suggestionList').innerHTML=data.length?data.map(s=>`<article class="queue-item"><b>${safe(s.request.title)}</b><p class="queue-meta">${safe(s.request.city)} · відповідних позицій: ${s.compatible_resources.length}</p></article>`).join(''):'<p class="muted">Зараз немає заявок, що відповідають вашому інвентарю.</p>'}catch(err){notify(err.message,true)}}
 async function loadAnalytics(){if(me.role!=='admin')return;try{const [a,vol,guest]=await Promise.all([api('/admin/analytics'),api('/admin/volunteers'),api('/admin/guest-requests/pending')]);$('stats').innerHTML=`<div><b>${a.requests_total}</b>Всього заявок</div><div><b>${a.verified_volunteers}</b>Перевірених волонтерів</div><div><b>${guest.length}</b>Заявок на перевірці</div>`;$('pendingVolunteers').innerHTML=vol.length?vol.map(v=>`<article class="queue-item"><b>${safe(v.full_name)}</b><p>${safe(v.email)}</p><button class="btn" data-verify="${v.id}">Підтвердити волонтера</button></article>`).join(''):'<p class="muted">Нових волонтерів немає.</p>';$('guestReviewList').innerHTML=guest.length?guest.map(r=>`<article class="queue-item"><span class="badge">${safe(categories[r.category])}</span><h3>Заявка №${r.id}</h3><p>${safe(r.city)} · ${r.people_count} люд.</p><div class="actions"><button class="btn btn-outline" data-review-detail="${r.id}">Переглянути контакти</button><button class="btn" data-review="${r.id}">Перевірено — відкрити волонтерам</button></div><div id="reviewDetails${r.id}"></div></article>`).join(''):'<p class="muted">Усі гостьові заявки перевірено.</p>';$('statusStats').innerHTML=Object.entries(a.by_status).map(([s,n])=>`<p>${safe(states[s]||s)}: <b>${n}</b></p>`).join('');document.querySelectorAll('[data-verify]').forEach(b=>b.onclick=async()=>{try{await api(`/admin/users/${b.dataset.verify}/verify`,'PATCH');notify('Волонтера підтверджено');await loadAnalytics()}catch(err){notify(err.message,true)}});document.querySelectorAll('[data-review-detail]').forEach(b=>b.onclick=async()=>{try{const r=await api(`/requests/${b.dataset.reviewDetail}`);$(`reviewDetails${r.id}`).innerHTML=`<div class="result"><b>Тестовий контакт:</b><p>${safe(r.phone)}</p><p>${safe(r.description)}</p></div>`}catch(err){notify(err.message,true)}});document.querySelectorAll('[data-review]').forEach(b=>b.onclick=async()=>{if(!confirm('Підтвердіть лише після перевірки заявки та контакту. Продовжити?'))return;try{await api(`/admin/guest-requests/${b.dataset.review}/review`,'PATCH');notify('Заявку відкрито волонтерам');await loadAnalytics();await loadRequests()}catch(err){notify(err.message,true)}})}catch(err){notify(err.message,true)}}
+/* RAZOM 2.5 extras — inserted into web/index.html by apply_razom_upgrade.py */
+let razomMap = null;
+let razomMapLayers = [];
+let razomMapBounds = null;
+
+function razomClearMap() {
+  if (razomMap) { razomMap.remove(); razomMap = null; }
+  razomMapLayers = [];
+  razomMapBounds = null;
+  const el = $('geoMap');
+  if (el) el.innerHTML = '';
+}
+
+async function razomLoadLeaflet() {
+  if (window.L) return window.L;
+  if (!window.razomLeafletPromise) {
+    window.razomLeafletPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+      script.onload = () => resolve(window.L);
+      script.onerror = () => reject(new Error('Не вдалося завантажити карту. Перевірте інтернет.'));
+      document.head.appendChild(script);
+    });
+  }
+  return window.razomLeafletPromise;
+}
+
+async function razomLoadDuplicates() {
+  const box = $('duplicateMatches');
+  if (!box) return;
+  try {
+    const data = await api('/admin/duplicates');
+    if (me?.role !== 'admin') return;
+    box.innerHTML = data.matches.length
+      ? data.matches.map(p => `<article class="queue-item">
+          <b>Можливий дубль: заявки №${p.request_a} і №${p.request_b}</b>
+          <p class="queue-meta">${safe(p.city)} · ${safe(categories[p.category]||p.category)} · схожість описів ${p.similarity_percent}%</p>
+          <p class="muted small">${safe(p.reason)}</p>
+          <div class="actions"><button type="button" class="btn btn-outline" data-duplicate-detail="${p.request_a}">Перша заявка</button>
+          <button type="button" class="btn btn-outline" data-duplicate-detail="${p.request_b}">Друга заявка</button></div></article>`).join('')
+      : '<p class="muted">Потенційних дублікатів за останні 30 днів не знайдено.</p>';
+    if (data.truncated) box.innerHTML += '<p class="muted small">Перевірено обмежену кількість найновіших заявок.</p>';
+    box.querySelectorAll('[data-duplicate-detail]').forEach(btn => btn.onclick = async () => {
+      tab('requestsTab');
+      await showDetail(Number(btn.dataset.duplicateDetail));
+    });
+  } catch (e) { box.textContent = e.message; }
+}
+
+async function razomLoadForecast() {
+  const box = $('forecastCards');
+  if (!box) return;
+  try {
+    const data = await api('/admin/forecast');
+    if (me?.role !== 'admin') return;
+    box.innerHTML = `<div class="feature-cards">${data.categories.map(c => `<div class="feature-card">
+      <b>${safe(categories[c.category]||c.category)}</b>
+      <p>Останні 7 днів: <strong>${c.last_7d}</strong></p>
+      <p>Попередні 7 днів: <strong>${c.previous_7d}</strong></p>
+      <p>Наступний тиждень: <strong>${c.enough_data ? `≈ ${c.forecast_next_7d}` : 'Недостатньо даних'}</strong></p>
+      <p class="muted small">${safe(c.trend)}</p></div>`).join('')}</div>
+      <p class="muted small">${safe(data.note)}</p>`;
+  } catch (e) { box.textContent = e.message; }
+}
+
+async function razomLoadGeography() {
+  const info = $('geoInfo');
+  if (!info) return;
+  try {
+    const data = await api('/admin/geography');
+    if (me?.role !== 'admin') return;
+    info.textContent = data.note + (data.unmapped.length
+      ? ` Не нанесено на карту: ${data.unmapped.map(p=>`${p.city} (${p.requests} заявок)`).join(', ')}.`
+      : '');
+    if (!data.points.length) { $('geoMap').textContent = 'Немає заявок у відомих містах для відображення на карті.'; return; }
+    const L = await razomLoadLeaflet();
+    if (me?.role !== 'admin') return;
+    razomClearMap();
+    razomMap = L.map('geoMap', {scrollWheelZoom: false});
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors',
+      maxZoom: 18,
+    }).addTo(razomMap);
+    const coords = [];
+    data.points.forEach(point => {
+      const pin = L.circleMarker([point.lat, point.lng], {
+        radius: Math.min(21, 6 + Math.sqrt(point.requests)*3), color: '#28684c',
+        fillColor: '#b9dfb9', fillOpacity: .78, weight: 2,
+      }).addTo(razomMap);
+      pin.bindPopup(`<b>${safe(point.city)}</b><p>Відкритих заявок: ${point.requests}<br>Позицій ресурсів: ${point.resources}</p>`);
+      coords.push([point.lat, point.lng]);
+    });
+    if (coords.length === 1) razomMap.setView(coords[0], 9);
+    else razomMap.fitBounds(coords, {padding: [25, 25], maxZoom: 9});
+    razomMapBounds = coords;
+    // Routes are only candidate transfers between city centres, not actual road paths.
+    try {
+      const logistics = await api('/logistics/matches');
+      if (me?.role === 'admin' && razomMap) {
+        logistics.matches.filter(x => !x.same_city && x.from_lat != null && x.to_lat != null)
+          .slice(0, 12).forEach(x => {
+            const line = L.polyline([[x.from_lat, x.from_lng], [x.to_lat, x.to_lng]], {
+              color: '#bd7b22', weight: 2, opacity: .65, dashArray: '7,7',
+            }).addTo(razomMap);
+            line.bindPopup(`Можливе перевезення: ${safe(x.resource_city)} → ${safe(x.request_city)}. ${x.distance_km_straight} км по прямій.`);
+          });
+      }
+    } catch { /* Map still useful if logistic endpoint is unavailable. */ }
+    setTimeout(() => razomMap?.invalidateSize(), 200);
+  } catch (e) { info.textContent = e.message; }
+}
+
+async function razomLoadAdminFeatures() {
+  if (me?.role !== 'admin') return;
+  await Promise.all([razomLoadDuplicates(), razomLoadForecast(), razomLoadGeography()]);
+}
+
+async function razomLoadLogistics() {
+  const box = $('logisticsList');
+  if (!box || !me || (me.role !== 'admin' && !(me.role === 'volunteer' && me.is_verified))) return;
+  try {
+    const data = await api('/logistics/matches');
+    if (!me || me.role === 'applicant') return;
+    const remote = data.matches.filter(m => !m.same_city);
+    box.innerHTML = remote.length
+      ? remote.slice(0, 20).map(m => `<article class="queue-item">
+        <b>Заявка №${m.request_id} — ${safe(m.request_city)}</b>
+        <p class="queue-meta">${safe(m.resource_name)} (${m.resource_quantity} ${safe(m.resource_unit)}) · з міста ${safe(m.resource_city)}</p>
+        <p>Приблизно ${m.distance_km_straight} км по прямій · ${safe(m.note)}</p>
+        <a class="btn btn-outline" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&amp;origin=${m.from_lat}%2C${m.from_lng}&amp;destination=${m.to_lat}%2C${m.to_lng}&amp;travelmode=driving">Маршрут у Google Maps</a>
+        </article>`).join('')
+      : '<p class="muted">Поки що немає можливих міжміських перевезень для наявних ресурсів.</p>';
+  } catch (e) { box.textContent = e.message; }
+}
+
+const razomOriginalLoadSuggestions = loadSuggestions;
+loadSuggestions = async function() {
+  if (me?.role !== 'volunteer' || !me.is_verified) return;
+  try {
+    const data = await api('/smart-matches');
+    const box = $('suggestionList');
+    box.innerHTML = data.matches.length
+      ? data.matches.slice(0, 25).map(m => `<article class="queue-item">
+        <b>Заявка №${m.request_id}: ${safe(m.request_title)}</b>
+        <p class="queue-meta">${safe(m.request_city)} · ${safe(tierLabels[m.priority_tier]||'Пріоритет')} · оцінка відповідності ${m.match_score}</p>
+        <p>Підходить ресурс: ${safe(m.resource_name)} (${m.resource_quantity} ${safe(m.resource_unit)})</p>
+        <button type="button" class="btn btn-outline" data-smart-claim="${m.request_id}">Взяти заявку</button>
+        </article>`).join('')
+      : '<p class="muted">Наразі немає доступних заявок, що відповідають вашим ресурсам.</p>';
+    box.querySelectorAll('[data-smart-claim]').forEach(btn => btn.onclick = async () => {
+      try {
+        await api(`/requests/${btn.dataset.smartClaim}/claim`, 'POST');
+        notify('Заявку взято в роботу');
+        await loadRequests(); await loadSuggestions();
+        await showDetail(btn.dataset.smartClaim);
+      } catch (e) { notify(e.message, true); }
+    });
+  } catch { await razomOriginalLoadSuggestions(); }
+};
+
+const razomOriginalLoadAnalytics = loadAnalytics;
+loadAnalytics = async function() {
+  await razomOriginalLoadAnalytics();
+  await razomLoadAdminFeatures();
+};
+const razomOriginalLoadResources = loadResources;
+loadResources = async function() {
+  await razomOriginalLoadResources();
+  await razomLoadLogistics();
+};
+const razomOriginalClearSensitive = clearSensitive;
+clearSensitive = function() {
+  razomOriginalClearSensitive();
+  for(const id of ['duplicateMatches','forecastCards','geoInfo','logisticsList']) {
+    const el = $(id); if(el) el.textContent = '';
+  }
+  razomClearMap();
+};
+const razomOriginalTab = tab;
+tab = function(name) {
+  razomOriginalTab(name);
+  if (name === 'analyticsTab') setTimeout(() => {
+    if (!razomMap) return;
+    razomMap.invalidateSize();
+    if (razomMapBounds?.length > 1) razomMap.fitBounds(razomMapBounds, {padding: [25,25], maxZoom: 9});
+  }, 200);
+};
+
 (async()=>{if(token)await renderDashboard();else if(/^#request-\d+$/.test(location.hash)){navigate('auth');notify('Увійдіть, щоб відкрити заявку',true)}else navigate('home')})();
 </script>
 </body>

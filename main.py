@@ -890,3 +890,8 @@ def analytics(user: CurrentUser, db: Db):
         "by_city": dict(by_city),
     }
 
+
+
+# Додаткові функції RAZOM 2.5: зберігаємо поточні маршрути і Telegram webhook.
+import razom_features
+app.include_router(razom_features.router)
